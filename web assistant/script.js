@@ -1,454 +1,526 @@
-// So, our project starts like this. In your JavaScript add these variables. Note that because there is a bit at work here that would otherwise be in global scope, we’re wrapping our entire project in a function:
+var camera, scene, renderer;
+var world, walter;
+var hemiLight, dirLight, backLight, isUp, frrrr, isMove;
 
-(function () {
-    // Set our main variables
-    let scene,
-        renderer,
-        camera,
-        model,                              // Our character
-        neck,                               // Reference to the neck bone in the skeleton
-        waist,                               // Reference to the waist bone in the skeleton
-        possibleAnims,                      // Animations found in our file
-        mixer,                              // THREE.js animations mixer
-        idle,                               // Idle, the default state our character returns to
-        clock = new THREE.Clock(),          // Used for anims, which run to a clock instead of frame rate 
-        currentlyAnimating = false,         // Used to check whether characters neck is being used in another anim
-        raycaster = new THREE.Raycaster(),  // Used to detect the click on our character
-        loaderAnim = document.getElementById('js-loader');
-
-    // We’re going to set up Three.js. This consists of a scene, a renderer, a camera, lights, and an update function. The update function runs on every frame.
-
-    // Let’s do all this inside an init() function. Under our variables, and inside our function scope, we add our init function:
-    init();
-
-    function init() {
-
-        // Right at the top of our init() function, before we reference our canvas, let’s reference the model file. This is in the GLTf format (.glb), Three.js support a range of 3D model formats, but this is the format it recommends. We’re going to use our GLTFLoader dependency to load this model into our scene.
-        const MODEL_PATH = 'https://s3-us-west-2.amazonaws.com/s.cdpn.io/1376484/stacy_lightweight.glb';
-
-        // Inside our init function, let’s reference our canvas element and set our background color, I’ve gone for a very light grey for this tutorial. Note that Three.js doesn’t reference colors in a string like so “#f1f1f1”, but rather a hexadecimal integer like 0xf1f1f1.
-        const canvas = document.querySelector('#c');
-        const backgroundColor = 0xf1f1f1;
-
-        // Below that, let’s create a new Scene. Here we set the background color, and we’re also going to add some fog. This isn’t that visible in this tutorial, but if your floor and background color are different, it can come in handy to blur those together.
-
-        // Init the scene
-        scene = new THREE.Scene();
-        scene.background = new THREE.Color(backgroundColor, 60, 100);
-
-        // Next up is the renderer, we create a new renderer and pass an object with the canvas reference and other options. The only option we’re using here is that we’re enabling antialiasing. We enable shadowMap so that our character can cast a shadow, and we set the pixel ratio to be that of the device, this is so that mobile devices render correctly. The canvas will display pixelated on high density screens otherwise. Finally, we add our renderer to our document body.
-
-        // Init the renderer
-        renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
-        renderer.shadowMap.enabled = true;
-        renderer.setPixelRatio(window.devicePixelRatio);
-        document.body.appendChild(renderer.domElement);
-
-        // That covers the first two things that Three.js needs. Next up is a camera. Let’s create a new perspective camera. We’re setting the field of view to 50, the size to that of the window, and the near and far clipping planes are the default. After that, we’re positioning the camera to be 30 units back, and 3 units down. This will become more obvious later. All of this can be experimented with, but I recommend using these settings for now.
-
-        // Add a camera
-        camera = new THREE.PerspectiveCamera(
-            50,
-            window.innerWidth / window.innerHeight,
-            0.1,
-            1000
-        );
-        camera.position.z = 30;
-        camera.position.x = 0;
-        camera.position.y = -3;
-
-        // We referenced the loader earlier; let’s create a new texture and material above this reference:
-        let stacy_txt = new THREE.TextureLoader().load('https://s3-us-west-2.amazonaws.com/s.cdpn.io/1376484/stacy.jpg');
-
-        stacy_txt.flipY = false; // we flip the texture so that its the right way up
-
-        const stacy_mtl = new THREE.MeshPhongMaterial({
-            map: stacy_txt,
-            color: 0xffffff,
-            skinning: true
-        });
-
-        //   Lets look at this for a second. Our texture can’t just be a URL to an image, it needs to be loaded in as a new texture using TextureLoader. We set this to a variable called stacy_txt.
-
-        // We’ve used materials before. This was placed on our floor with the color 0xeeeeee, we’re using a couple of new options here for our models material. Firstly, we’re passing the stacy_txt texture to the map property. Secondly we are turning skinning on, this is critical for animated models. We reference this material with stacy_mtl.
-
-        // Okay, so we’ve got our textured material, our files scene (gltf.scene) only has one object, so, in our traverse method, let’s add one more line under the lines that enabled our object to cast and receive shadows:
-
-        var loader = new THREE.GLTFLoader();
-
-        // This loader uses a method called load. It takes four arguments: the model path, a function to call once the model is loaded, a function to call during the loading, and a function to catch errors.
-
-        // Let's add this now:
-
-        loader.load(
-            MODEL_PATH,
-            function (gltf) {
-                // A lot is going to happen here
-                model = gltf.scene;
-                let fileAnimations = gltf.animations;
-
-                // First of all, we’re going to use the model’s traverse method to find all the meshs, and enabled the ability to cast and receive shadows. This is done like this. Again, this should go above scene.add(model): 
-                model.traverse(o => {
-                    if (o.isMesh) {
-                        o.castShadow = true;
-                        o.receiveShadow = true;
-                        o.material = stacy_mtl;
-                    }
-                    // Reference the neck and waist bones
-                    if (o.isBone && o.name === 'mixamorigNeck') {
-                        neck = o;
-                    }
-                    if (o.isBone && o.name === 'mixamorigSpine') {
-                        waist = o;
-                    }
-                });
-
-                // Now for a little bit more investigative work. We created an AnimationClip called idleAnim which we then sent to our mixer to play. We want to snip the neck and skeleton tracks out of this animation, or else our idle animation is going to overwrite any manipulation we try and create manually on our model.
-
-                // So the first thing I did was console log idleAnim. It’s an object, with a property called tracks. The value of tracks is an array of 156 values, every 3 values represent the animation of a single bone. The three being the position, quaternion (rotation) and the scale of a bone. So the first three values are the hips position, rotation and scale.
-
-                // What I was looking for though was this (pasted from my console):
-
-                // 3: ad {name: "mixamorigSpine.position", ...
-                // 4: ke {name: "mixamorigSpine.quaternion", ...
-                // 5: ad {name: "mixamorigSpine.scale", ...
-
-                // …and this:
-
-                // 12: ad {name: "mixamorigNeck.position", ...
-                // 13: ke {name: "mixamorigNeck.quaternion", ...
-                // 14: ad {name: "mixamorigNeck.scale", ...
-
-                // So inside our animation, I want to splice the tracks array to remove 3,4,5 and 12,13,14.
-
-                // However, once I splice 3,4,5 …. My neck becomes 9,10,11. Something to keep in mind.
-
-                // Then, we’re going to set the model’s scale to a uniformed 7x its initial size. Add this below our traverse method:
-                // Set the model's initial scale
-                model.scale.set(7, 7, 7);
-
-                // And finally, let’s move the model down by 11 units so that it’s standing on the floor.
-                model.position.y = -11;
-
-                scene.add(model);
-
-                // Perfect, we’ve loaded in our model. Let’s now load in the texture and apply it. This model came with the texture and the model has been mapped to this texture in Blender. This process is called UV mapping. Feel free to download the image itself to look at it, and learn more about UV mapping if you’d like to explore the idea of making your own character.
-
-                loaderAnim.remove();
-
-                // All we’re doing here is removing the loading animation overlay once Stacy has been added to the scene. Save and then refresh, you should see the loader until the page is ready to show Stacy. If the model is cached, the page might load too quickly to see it.
-
-                // We’re going to create a new AnimationMixer, an AnimationMixer is a player for animations on a particular object in the scene.
-                mixer = new THREE.AnimationMixer(model);
-
-                // we’re going to get a list of AnimationClips that aren’t idle (we don’t want to randomly select idle as one of the options when we click on Stacy). We do that like so:
-                let clips = fileAnimations.filter(val => val.name !== 'idle');
-
-                // Now below that, we’re going to convert all of those clips into Three.js AnimationClips, the same way we did for idle. We’re also going to splice the neck and spine bone out of the skeleton and add all of these AnimationClips into a variable called possibleAnims, which is already referenced at the top of our project.
-                possibleAnims = clips.map(val => {
-                    let clip = THREE.AnimationClip.findByName(clips, val.name);
-                    clip.tracks.splice(3, 3);
-                    clip.tracks.splice(9, 3);
-                    clip = mixer.clipAction(clip);
-                    return clip;
-                });
-
-                // We now have an array of clipActions we can play when we click Stacy. The trick here though is that we can’t add a simple click event listener on Stacy, as she isn’t part of our DOM. We are instead going to use raycasting, which essentially means shooting a laser beam in a direction and returning the objects that it hit. In this case we’re shooting from our camera in the direction of our cursor.
-
-                // We’re going to create a new AnimationClip, we’re looking inside our fileAnimations to find an animation called ‘idle’. This name was set inside Blender.
-                let idleAnim = THREE.AnimationClip.findByName(fileAnimations, 'idle');
-
-                idleAnim.tracks.splice(3, 3);
-                idleAnim.tracks.splice(9, 3);
-
-                // We then use a method in our mixer called clipAction, and pass in our idleAnim. We call this clipAction idle.
-
-                // Finally, we tell idle to play:
-                idle = mixer.clipAction(idleAnim);
-                idle.play();
-
-                // It’s not going play yet though, we do need one more thing. The mixer needs to be updated in order for it to run continuously through an animation. In order to do this, we need to tell it to update inside our update() function.
-
-            },
-            undefined, // We don't need this function
-            function (error) {
-                console.error(error);
-            }
-        );
-
-        //   Note that scene, renderer and camera are initially referenced at the top of our project.
-
-        // Without lights our camera has nothing to display. We’re going to create two lights, a hemisphere light, and a directional light. We then add them to the scene using scene.add(light).
-
-        // Let’s add our lights under the camera. I’ll explain a bit more about what we’re doing afterwards:
-
-        // Add Lights
-        let hemiLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 0.61);
-        hemiLight.position.set(0, 50, 0);
-        // Add hemisphere light to scene
-        scene.add(hemiLight);
-
-        let d = 8.25;
-        let dirLight = new THREE.DirectionalLight(0xffffff, 0.54);
-        dirLight.position.set(-8, 12, 8);
-        dirLight.castShadow = true;
-        dirLight.shadow.mapSize = new THREE.Vector2(1024, 1024);
-        dirLight.shadow.camera.near = 0.1;
-        dirLight.shadow.camera.far = 1500;
-        dirLight.shadow.camera.left = d * -1;
-        dirLight.shadow.camera.right = d;
-        dirLight.shadow.camera.top = d;
-        dirLight.shadow.camera.bottom = d * -1;
-
-        // Add directional Light to scene
-        scene.add(dirLight);
-
-        //   The hemisphere light is just casting white light, and its intensity is at 0.61. We also set its position 50 units above our center point; feel free to experiment with this later.
-
-        //   Our directional light needs a position set; the one I’ve chosen feels right, so let’s start with that. We enable the ability to cast a shadow, and set the shadow resolution. The rest of the shadows relate to the lights view of the world, this gets a bit vague to me, but its enough to know that the variable d can be adjusted until your shadows aren’t clipping in strange places.
-
-        //   While we’re here in our init function, lets add our floor:
-        // Floor
-        let floorGeometry = new THREE.PlaneGeometry(5000, 5000, 1, 1);
-        let floorMaterial = new THREE.MeshPhongMaterial({
-            color: 0xeeeeee,
-            shininess: 0
-        });
-
-        let floor = new THREE.Mesh(floorGeometry, floorMaterial);
-        floor.rotation.x = -0.5 * Math.PI; // This is 90 degrees by the way
-        floor.receiveShadow = true;
-        floor.position.y = -11;
-        scene.add(floor);
-
-        // What we’re doing here is creating a new plane geometry, which is big: it’s 5000 units (for no particular reason at all other than it really ensures our seamless background).
-
-        // We then create a material for our scene. This is new. We only have a couple different materials in this tutorial, but it’s enough to know for now that you combine geometry and materials into a mesh, and this mesh is a 3D object in our scene. The mesh we’re making now is a really big, flat plane rotated to be flat on the ground (well, it is the ground). Its color is set to 0xeeeeee which is slightly darker than our background. Why? Because our lights shine on this floor, but our lights don’t affect the background. This is a color I manually tweaked in to give us the seamless scene. Play around with it once we’re done.
-
-        // Our floor is a Mesh which combines the Geometry and Material. Read through what we just added, I think you’ll find that everything is self explanatory. We’re moving our floor down 11 units, this will make sense once we load in our character.
-
-        // Below your floor, as the final lines of your init() function, let’s add a circle accent. This is really a 3D sphere, quite big but far away, that uses a BasicMaterial. The materials we’ve used previously are called PhongMaterials which can be shiny, and also most importantly can receive and cast shadows. A BasicMaterial however, can not. So, add this sphere to your scene to create a flat circle that frames Stacy better.
-        let geometry = new THREE.SphereGeometry(8, 32, 32);
-        let material = new THREE.MeshBasicMaterial({ color: 0x9bffaf }); // 0xf2ce2e
-        let sphere = new THREE.Mesh(geometry, material);
-        sphere.position.z = -15;
-        sphere.position.y = -2.5;
-        sphere.position.x = -0.25;
-        scene.add(sphere);
+var container = {
+    width: 0,
+    height: 0
+}
+var mouse = {
+    x: {
+        current: 0,
+        previous: 0,
+        calc: 0
+    },
+    y: {
+        current: 0,
+        previous: 0,
+        calc: 0
     }
+}
 
-    // One crucial aspect that Three.js relies on is an update function, which runs every frame, and is similar to how game engines work if you’ve ever dabbled with Unity. This function needs to be placed after our init() function instead of inside it. Inside our update function the renderer renders the scene and camera, and the update is run again. Note that we immediately call the function after the function itself.
+function init() {
 
-    function update() {
-        if (mixer) {
-            mixer.update(clock.getDelta());
-        }
+    container.width = window.innerWidth;
+    container.height = window.innerHeight;
 
-        // The update takes our clock (a Clock was referenced at the top of our project) and updates it to that clock. This is so that animations don’t slow down if the frame rate slows down. If you run an animation to a frame rate, it’s tied to the frames to determine how fast or slow it runs, that’s not what you want.
+    camera = new THREE.PerspectiveCamera(65, container.width / container.height, 1, 2000);
+    camera.position.z = 2000;
+    camera.position.y = 400;
+    camera.lookAt(new THREE.Vector3(0, 0, 0));
 
-        // If you don’t know much about 3D (or even 2D animation in most cases), the way it works is that there is a skeleton (or an array of bones) that warp the mesh. These bones position, scale and rotation are animated across time to warp and move our mesh in interesting ways. We’re going to hook into Stacys skeleton (ek) and reference her neck bone and her bottom spine bone. We’re then going to rotate these bones depending on where the cursor is relative to the middle of the screen. In order for us to do this though, we need to tell our current idle animation to ignore these two bones. Let’s get started.
+    scene = new THREE.Scene();
 
-        // So now we know our spine (from here on out referenced as the waist), and our neck names.
+    renderer = new THREE.WebGLRenderer({
+        alpha: true,
+        antialias: true
+    });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMapEnabled = true;
 
-        // In our model traverse, let’s add these bones to our neck and waist variables which have already been referenced at the top of our project.
+    world = document.getElementById('breakingbad');
+    world.appendChild(renderer.domElement);
 
-        if (resizeRendererToDisplaySize(renderer)) {
-            const canvas = renderer.domElement;
-            camera.aspect = canvas.clientWidth / canvas.clientHeight;
-            camera.updateProjectionMatrix();
-        }
-        renderer.render(scene, camera);
-        requestAnimationFrame(update);
+    window.addEventListener('load', function() {
+        document.addEventListener('mousemove', mousemove, false);
+        window.addEventListener('resize', onWindowResize, false);
+        document.addEventListener('mouseup', mouseup, false);
+        document.addEventListener('mousedown', mousedown, false);
+        document.addEventListener('touchend', touchend, false);
+        document.addEventListener('touchmove', touchmove, false);
+    });
+}
+
+function onWindowResize() {
+    container.width = window.innerWidth;
+    container.height = window.innerHeight;
+    camera.aspect = container.width / container.height;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function mousemove(e) {
+    mouse.x.current = e.clientX;
+    mouse.y.current = e.clientY;
+    mouse.x.calc = mouse.x.current - (container.width / 2);
+    mouse.y.calc = mouse.y.current - (container.height / 2);
+}
+
+
+function touchend(e) {
+    if (isUp) {
+        isUp = false;
+    } else {
+        mousedown(e);
     }
-    update();
+}
 
-    // Our scene should now turn on. The canvas is rendering a light grey; what we’re actually seeing here is both the background and the floor. You can test this out by changing the floors material color to 0xff0000. Remember to change it back though!
-
-    // We’re going to load the model in the next part. Before we do though, there is one more thing our scene needs. The canvas as an HTML element will resize just fine the way it is, the height and width is set to 100% in CSS. But, the scene needs to be aware of resizes too so that it can keep everything in proportion. Below where we call our update function (not inside it), add this function. Read it carefully if you’d like, but essentially what it’s doing is constantly checking whether our renderer is the same size as our canvas, as soon as it’s not, it returns needResize as a boolean.
-
-    function resizeRendererToDisplaySize(renderer) {
-        const canvas = renderer.domElement;
-        let width = window.innerWidth;
-        let height = window.innerHeight;
-        let canvasPixelWidth = canvas.width / window.devicePixelRatio;
-        let canvasPixelHeight = canvas.height / window.devicePixelRatio;
-
-        const needResize =
-            canvasPixelWidth !== width || canvasPixelHeight !== height;
-        if (needResize) {
-            renderer.setSize(width, height, false)
-        }
-        return needResize;
+function touchmove(e) {
+    if (e.touches.length === 1) {
+        e.preventDefault();
+        mouse.x.current = e.touches[0].pageX,
+            mouse.y.current = e.touches[0].pageY;
+        mouse.x.calc = mouse.x.current - (container.width / 2);
+        mouse.y.calc = mouse.y.current - (container.height / 2);
     }
+}
 
-    // let’s add an event listener, along with a function that returns our mouse position whenever it’s moved.
+function mouseup(e) {
+    isUp = false;
+    console.log(isUp)
 
-    // We will add raycasting here
-    window.addEventListener('click', e => raycast(e));
-    window.addEventListener('touchend', e => raycast(e, true));
+}
 
-    function raycast(e, touch = false) {
-        var mouse = {};
-        if (touch) {
-            mouse.x = 2 * (e.changedTouches[0].clientX / window.innerWidth) - 1;
-            mouse.y = 1 - 2 * (e.changedTouches[0].clientY / window.innerHeight);
-        } else {
-            mouse.x = 2 * (e.clientX / window.innerWidth) - 1;
-            mouse.y = 1 - 2 * (e.clientY / window.innerHeight);
-        }
-        // update the picking ray with the camera and mouse position
-        raycaster.setFromCamera(mouse, camera);
+function mousedown(e) {
+    isUp = true;
+    console.log(isUp)
 
-        // calculate objects intersecting the picking ray
-        var intersects = raycaster.intersectObjects(scene.children, true);
+}
 
-        if (intersects[0]) {
-            var object = intersects[0].object;
+function addLights() {
+    hemiLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 0.6);
 
-            if (object.name === 'stacy') {
+    dirLight = new THREE.DirectionalLight(0xffffff, .8);
+    dirLight.position.set(200, 200, 200);
+    dirLight.castShadow = true;
+    dirLight.shadowDarkness = .1;
 
-                if (!currentlyAnimating) {
-                    currentlyAnimating = true;
-                    playOnClick();
-                }
-            }
-        }
-    }
+    backLight = new THREE.DirectionalLight(0xffffff, .4);
+    backLight.position.set(-200, 200, 50);
+    backLight.shadowDarkness = .1;
+    backLight.castShadow = true;
 
-    // We’re adding two event listeners, one for desktop and one for touch screens. We pass the event to the raycast() function but for touch screens, we’re setting the touch argument as true.
-
-    // Inside the raycast() function, we have a variable called mouse. Here we set mouse.x and mouse.y to be changedTouches[0] position if touch is true, or just return the mouse position on desktop.
-
-    // Next we call setFromCamera on raycaster, which has already been set up as a new Raycaster at the top of our project, ready to use. This line essentially raycasts from the camera to the mouse position. Remember we’re doing this every time we click, so we’re shooting lasers with a mouse at Stacy (brand new sentence?).
-
-    // We then get an array of intersected objects; if there are any, we set the first object that was hit to be our object.
-
-    // We check that the objects name is ‘stacy’, and we run a function called playOnClick() if the object is called ‘stacy’. Note that we are also checking that a variable currentlyAnimating is false before we proceed. We toggle this variable on and off so that we can’t run a new animation when one is currently running (other than idle). We will turn this back to false at the end of our animation. This variable is referenced at the top of our project.
-
-    // Okay, so playOnClick. Below our rayasting function, add our playOnClick function.
-
-    // Get a random animation, and play it
-    function playOnClick() {
-        let anim = Math.floor(Math.random() * possibleAnims.length) + 0;
-        playModifierAnimation(idle, 0.25, possibleAnims[anim], 0.25);
-    }
-
-    // This simply chooses a random number between 0 and the length of our possibleAnims array, then we call another function called playModifierAnimation. This function takes in idle (we’re moving from idle), the speed to blend from idle to a new animation (possibleAnims[anim]), and the last argument is the speed to blend from our animation back to idle. Under our playOnClick function, lets add our playModifierAnimation and I’ll explain what its doing.
-
-    function playModifierAnimation(from, fSpeed, to, tSpeed) {
-        to.setLoop(THREE.LoopOnce);
-        to.reset();
-        to.play();
-        from.crossFadeTo(to, fSpeed, true);
-        setTimeout(function () {
-            from.enabled = true;
-            to.crossFadeTo(from, tSpeed, true);
-            currentlyAnimating = false;
-        }, to._clip.duration * 1000 - ((tSpeed + fSpeed) * 1000));
-    }
-
-    //   The first thing we do is reset the to animation, this is the animation that’s about to play. We also set it to only play once, this is done because once the animation has completed its course (perhaps we played it earlier), it needs to be reset to play again. We then play it.
-
-    // Each clipAction has a method called crossFadeTo, we use it to fade from (idle) to our new animation using our first speed (fSpeed, or from speed).
-
-    // At this point our function has faded from idle to our new animation.
-
-    // We then set a timeout function, we turn our from animation (idle) back to true, we cross fade back to idle, then we toggle currentlyAnimating back to false (allowing another click on Stacy). The time of the setTimeout is calculated by combining our animations length (* 1000 as this is in seconds instead of milliseconds), and removing the speed it took to fade to and from that animation (also set in seconds, so * 1000 again). This leaves us with a function that fades from idle, plays an animation and once it’s completed, fades back to idle, allowing another click on Stacy.
-
-    // Notice that our neck and spine bones aren’t affected, giving us the ability to still control the way those rotate during the animation!
+    scene.add(backLight);
+    scene.add(hemiLight);
+    scene.add(dirLight);
+}
 
 
+function createWalter() {
+    walter = new Walter();
+    scene.add(walter.threegroup);
+}
 
-    document.addEventListener('mousemove', function (e) {
-        var mousecoords = getMousePos(e);
-        if (neck && waist) {
-            moveJoint(mousecoords, neck, 50);
-            moveJoint(mousecoords, waist, 30);
-        }
+
+function Walter() {
+
+    this.threegroup = new THREE.Group();
+
+    this.informalSmokingMat = "#ffc107";
+    this.informalLegsMMat = "#755b0b";
+    this.informalZipperMat = "#755b0b";
+    this.informalShoesMat = "#907637";
+
+    this.formalSmokingMat = "#333";
+    this.formalLegsMMat = "#222";
+    this.formalZipperMat = "white";
+    this.formalShoesMat = "#585858";
+
+
+    this.hatMat = new THREE.MeshLambertMaterial({
+        color: "#333",
+        shading: THREE.FlatShading,
     });
 
-    // Just like that, move your mouse around the viewport and Stacy should watch your cursor wherever you go! Notice how idle animation is still running, but because we snipped the neck and spine bone (yuck), we’re able to controls those independently.
+    this.skinMat = new THREE.MeshLambertMaterial({
+        color: "#e0bea5",
+        shading: THREE.FlatShading,
+    });
 
-    function getMousePos(e) {
-        return { x: e.clientX, y: e.clientY };
+    this.pupilaMat = new THREE.MeshLambertMaterial({
+        color: "#333",
+        shading: THREE.FlatShading,
+    });
+
+    this.lipMat = new THREE.MeshLambertMaterial({
+        color: "#333",
+        shading: THREE.FlatShading,
+    });
+
+    this.eyeMat = new THREE.MeshLambertMaterial({
+        color: "white",
+        shading: THREE.FlatShading
+    });
+
+    this.bearMat = new THREE.MeshLambertMaterial({
+        color: "#bb7344",
+        shading: THREE.FlatShading
+    });
+
+    this.zipperMat = new THREE.MeshLambertMaterial({
+        color: this.formalZipperMat,
+        shading: THREE.FlatShading
+    });
+
+    this.smokingMat = new THREE.MeshLambertMaterial({
+        color: this.formalSmokingMat,
+        shading: THREE.FlatShading
+    });
+
+    this.legsMMat = new THREE.MeshLambertMaterial({
+        color: this.formalLegsMMat,
+        shading: THREE.FlatShading
+    });
+
+    this.shoesMat = new THREE.MeshLambertMaterial({
+        color: this.formalShoesMat,
+        shading: THREE.FlatShading
+    });
+
+
+    //head
+    var head = new THREE.BoxGeometry(300, 350, 280);
+    this.head = new THREE.Mesh(head, this.skinMat);
+    this.head.position.x = 0;
+    this.head.position.y = 160;
+    this.head.position.z = 400;
+
+
+    //glasses
+    var glass = new THREE.BoxGeometry(120, 78, 10);
+    //Retinas Left
+    this.glassLeft = new THREE.Mesh(glass, this.eyeMat);
+    this.glassLeft.position.x = -80;
+    this.glassLeft.position.y = 4;
+    this.glassLeft.position.z = 160;
+    //Retinas Right
+    this.glassRight = new THREE.Mesh(glass, this.eyeMat);
+    this.glassRight.position.x = 80;
+    this.glassRight.position.y = 4;
+    this.glassRight.position.z = 160;
+
+    //glass middle
+    var glassu = new THREE.BoxGeometry(40, 10, 10);
+    //Retinas Left
+    this.glassu = new THREE.Mesh(glassu, this.pupilaMat);
+    this.glassu.position.x = 0;
+    this.glassu.position.y = 5;
+    this.glassu.position.z = 155;
+
+    //Retinas
+    var retina = new THREE.BoxGeometry(25, 25, 5);
+    //Retinas Left
+    this.retinaLeft = new THREE.Mesh(retina, this.pupilaMat);
+    this.retinaLeft.position.x = -80;
+    this.retinaLeft.position.y = 5;
+    this.retinaLeft.position.z = 168;
+    //Retinas Right
+    this.retinaRight = new THREE.Mesh(retina, this.pupilaMat);
+    this.retinaRight.position.x = 80;
+    this.retinaRight.position.y = 5;
+    this.retinaRight.position.z = 168;
+
+    //beard
+    var beard = new THREE.BoxGeometry(140, 130, 10);
+    this.beard = new THREE.Mesh(beard, this.bearMat);
+    this.beard.position.x = 0;
+    this.beard.position.z = 160;
+    this.beard.position.y = -140;
+
+    //mout
+    var mout = new THREE.BoxGeometry(90, 60, 50);
+    this.mout = new THREE.Mesh(mout, this.skinMat);
+    this.mout.position.x = 0;
+    this.mout.position.z = 155;
+    this.mout.position.y = -130;
+
+    //lip
+    var lip = new THREE.BoxGeometry(40, 20, 50);
+    this.lip = new THREE.Mesh(lip, this.lipMat);
+    this.lip.position.x = 0;
+    this.lip.position.z = 162;
+    this.lip.position.y = -120;
+
+    //Hat
+    var hatTop = new THREE.BoxGeometry(320, 120, 290);
+    this.hatTop = new THREE.Mesh(hatTop, this.hatMat);
+    this.hatTop.position.x = 0;
+    this.hatTop.position.z = 0;
+    this.hatTop.position.y = 180;
+
+    var hatBottom = new THREE.BoxGeometry(400, 40, 380);
+    this.hatBottom = new THREE.Mesh(hatBottom, this.hatMat);
+    this.hatBottom.position.x = 0;
+    this.hatBottom.position.z = 0;
+    this.hatBottom.position.y = 100;
+
+    //body
+
+    var body = new THREE.BoxGeometry(300, 250, 600);
+    this.body = new THREE.Mesh(body, this.smokingMat);
+    this.body.position.x = 0;
+    this.body.position.y = -220;
+    this.body.position.z = 100;
+
+    //arms
+
+    var arm = new THREE.BoxGeometry(50, 250, 100);
+
+    this.armLeft = new THREE.Mesh(arm, this.smokingMat);
+    this.armLeft.position.x = -170;
+    this.armLeft.position.y = 0;
+    this.armLeft.position.z = 200;
+
+    this.armRight = new THREE.Mesh(arm, this.smokingMat);
+    this.armRight.position.x = 170;
+    this.armRight.position.y = 0;
+    this.armRight.position.z = 200;
+
+
+    // hands
+
+    var hand = new THREE.BoxGeometry(50, 50, 50);
+
+    this.handLeft = new THREE.Mesh(hand, this.skinMat);
+    this.handLeft.position.x = -170;
+    this.handLeft.position.y = -150;
+    this.handLeft.position.z = 220;
+
+    this.handRight = new THREE.Mesh(hand, this.skinMat);
+    this.handRight.position.x = 170;
+    this.handRight.position.y = -150;
+    this.handRight.position.z = 220;
+
+    //zipper
+
+    var zipper = new THREE.BoxGeometry(80, 250, 10);
+    this.zipper = new THREE.Mesh(zipper, this.zipperMat);
+    this.zipper.position.x = 0;
+    this.zipper.position.y = 0;
+    this.zipper.position.z = 300;
+
+    //legs
+
+    var legs = new THREE.BoxGeometry(200, 300, 300);
+    this.legs = new THREE.Mesh(legs, this.smokingMat);
+    this.legs.position.x = 0;
+    this.legs.position.y = -200;
+    this.legs.position.z = 100;
+
+    //legsMiddle
+
+    var legsM = new THREE.BoxGeometry(10, 130, 5);
+    this.legsM = new THREE.Mesh(legsM, this.legsMMat);
+    this.legsM.position.x = 0;
+    this.legsM.position.y = -280;
+    this.legsM.position.z = 248;
+
+    //shoes
+
+    var shoes = new THREE.BoxGeometry(200, 50, 400);
+    this.shoes = new THREE.Mesh(shoes, this.shoesMat);
+    this.shoes.position.x = 0;
+    this.shoes.position.y = -400;
+    this.shoes.position.z = 100;
+
+
+    // group elements
+
+    this.head.add(this.hatTop);
+    this.head.add(this.hatBottom);
+
+    this.head.add(this.glassu);
+    this.head.add(this.glassLeft);
+    this.head.add(this.glassRight);
+    this.head.add(this.retinaLeft);
+    this.head.add(this.retinaRight);
+    this.head.add(this.beard);
+    this.head.add(this.mout);
+    this.head.add(this.lip);
+
+    this.body.add(this.armLeft);
+    this.body.add(this.armRight);
+    this.body.add(this.zipper);
+    this.body.add(this.handLeft);
+    this.body.add(this.handRight);
+    this.body.add(this.legs);
+    this.body.add(this.legsM);
+    this.body.add(this.shoes);
+
+    this.threegroup.add(this.head);
+    this.threegroup.add(this.body);
+
+
+    this.update = function() {
+        //move body
+        this.bodyRY = calc(mouse.x.calc, -400, 400, -Math.PI / 20, Math.PI / 20);
+        this.bodyRX = calc(mouse.y.calc, -400, 400, -Math.PI / 90, Math.PI / 90);
+        //move head
+        this.headRY = calc(mouse.x.calc, -200, 200, -Math.PI / 4, Math.PI / 4);
+        this.headRX = calc(mouse.y.calc, -200, 200, -Math.PI / 4, Math.PI / 4);
+
+        this.rotate(10);
     }
 
-    // Below this, we’re going to create a new function called moveJoint. I’ll walk us through everything that these functions do.
+    this.rotate = function(speed) {
 
-    function moveJoint(mouse, joint, degreeLimit) {
-        let degrees = getMouseDegrees(mouse.x, mouse.y, degreeLimit);
-        joint.rotation.y = THREE.Math.degToRad(degrees.x);
-        joint.rotation.x = THREE.Math.degToRad(degrees.y);
+        if (isUp) {
+
+            if (this.beard.scale.y < 2) {
+                this.beard.scale.y += 0.02;
+                this.beard.position.y -= 1.3;
+                this.body.position.z -= 2;
+            }
+
+            world.classList.add('noBreathe');
+            this.body.material.color = new THREE.Color(this.informalSmokingMat);
+            this.legsM.material.color = new THREE.Color(this.informalLegsMMat);
+            this.zipper.material.color = new THREE.Color(this.informalZipperMat);
+            this.shoes.material.color = new THREE.Color(this.informalShoesMat);
+
+            this.zipper.scale.x = this.zipper.scale.x = 0.2;
+            this.hatTop.scale.x = this.hatBottom.scale.x = 0;
+            this.hatTop.scale.y = this.hatBottom.scale.y = 0;
+            this.hatTop.scale.z = this.hatBottom.scale.z = 0;
+            this.lip.scale.x = 0.5;
+
+            this.retinaLeft.rotateZ(0.1);
+            this.retinaRight.rotateZ(-0.1);
+            this.handLeft.rotateY(0.1);
+            this.handRight.rotateY(-0.1);
+
+        } else {
+            world.classList.remove('noBreathe');
+
+            this.beard.position.set(0, -140, 160);
+            this.beard.scale.y = 1;
+            this.body.position.z = 100;
+
+            this.body.material.color = new THREE.Color(this.formalSmokingMat);
+            this.legsM.material.color = new THREE.Color(this.formalLegsMMat);
+            this.zipper.material.color = new THREE.Color(this.formalZipperMat);
+            this.shoes.material.color = new THREE.Color(this.formalShoesMat);
+
+            this.zipper.scale.x = this.zipper.scale.x = 1;
+            this.hatTop.scale.x = this.hatBottom.scale.x = 1;
+            this.hatTop.scale.y = this.hatBottom.scale.y = 1;
+            this.hatTop.scale.z = this.hatBottom.scale.z = 1;
+            this.lip.scale.x = 1;
+
+            this.retinaLeft.rotation.z = 0;
+            this.retinaRight.rotation.z = 0;
+            this.handLeft.rotation.y = 0;
+            this.handRight.rotation.y = 0;
+
+
+        }
+
+        this.body.rotation.y += (this.bodyRY - this.body.rotation.y) / speed;
+        this.body.rotation.x += (this.bodyRX - this.body.rotation.x) / speed;
+        this.head.scale.x = this.head.scale.y = this.head.scale.z = 1;
+        this.head.rotation.y += (this.headRY - this.head.rotation.y) / speed;
+        this.head.rotation.x += (this.headRX - this.head.rotation.x) / speed;
     }
 
-    // The moveJoint function takes three arguments, the current mouse position, the joint we want to move, and the limit (in degrees) that the joint is allowed to rotate. This is called degreeLimit, remember this as I’ll talk about it soon.
+}
 
-    // We have a variable called degrees referenced at the top, the degrees come from a function called getMouseDegrees, which returns an object of {x, y}. We then use these degrees to rotate the joint on the x axis and the y axis.
 
-    //   Before we add getMouseDegrees, I want to explain what it does.
+function calc(v, vmin, vmax, tmin, tmax) {
+    var nv = Math.max(Math.min(v, vmax), vmin);
+    var dv = vmax - vmin;
+    var pc = (nv - vmin) / dv;
+    var dt = tmax - tmin;
+    var tv = tmin + (pc * dt);
+    return tv;
+}
 
-    // getMouseDegrees does this: It checks the top half of the screen, the bottom half of the screen, the left half of the screen, and the right half of the screen. It determines where the mouse is on the screen in a percentage between the middle and each edge of the screen.
+function loop() {
+    renderer.render(scene, camera);
+    walter.update();
+    requestAnimationFrame(loop);
+}
 
-    // For instance, if the mouse is half way between the middle of the screen and the right edge. The function determines that right = 50%, if the mouse is a quarter of the way UP from the center, the function determines that up = 25%.
-
-    // Once the function has these percentages, it returns the percentage of the degreelimit.
-
-    // So the function can determine your mouse is 75% right and 50% up, and return 75% of the degree limit on the x axis and 50% of the degree limit on the y axis. Same for left and right.
-
-    function getMouseDegrees(x, y, degreeLimit) {
-        let dx = 0,
-            dy = 0,
-            xdiff,
-            xPercentage,
-            ydiff,
-            yPercentage;
-
-        let w = { x: window.innerWidth, y: window.innerHeight };
-
-        // Left (Rotates neck left between 0 and -degreeLimit)
-
-        // 1. If cursor is in the left half of screen
-        if (x <= w.x / 2) {
-            // 2. Get the difference between middle of screen and cursor position
-            xdiff = w.x / 2 - x;
-            // 3. Find the percentage of that difference (percentage toward edge of screen)
-            xPercentage = (xdiff / (w.x / 2)) * 100;
-            // 4. Convert that to a percentage of the maximum rotation we allow for the neck
-            dx = ((degreeLimit * xPercentage) / 100) * -1;
-        }
-        // Right (Rotates neck right between 0 and degreeLimit)
-        if (x >= w.x / 2) {
-            xdiff = x - w.x / 2;
-            xPercentage = (xdiff / (w.x / 2)) * 100;
-            dx = (degreeLimit * xPercentage) / 100;
-        }
-        // Up (Rotates neck up between 0 and -degreeLimit)
-        if (y <= w.y / 2) {
-            ydiff = w.y / 2 - y;
-            yPercentage = (ydiff / (w.y / 2)) * 100;
-            // Note that I cut degreeLimit in half when she looks up
-            dy = (((degreeLimit * 0.5) * yPercentage) / 100) * -1;
-        }
-
-        // Down (Rotates neck down between 0 and degreeLimit)
-        if (y >= w.y / 2) {
-            ydiff = y - w.y / 2;
-            yPercentage = (ydiff / (w.y / 2)) * 100;
-            dy = (degreeLimit * yPercentage) / 100;
-        }
-        return { x: dx, y: dy };
-    }
-
-    // Once we have that function, we can now use moveJoint. We’re going to use it for the neck with a 50 degree limit, and for the waist with a 30 degree limit.
-
-    // Update our mousemove event listener to include these moveJoints:
+init();
+addLights();
+createWalter();
+loop();
 
 
 
-    //   Our scene is super sparse, but it’s set up and we’ve got our resizing sorted, our lights and camera are working. Let’s add the model.
+const msgBox = document.querySelector('.msg-box')
 
+const btn1 = document.getElementById('btn-1');
+const btn2 = document.getElementById('btn-2');
+const btn3 = document.getElementById('btn-3');
+const btn4 = document.getElementById('btn-4');
+const btn5 = document.getElementById('btn-5');
+const btns = document.querySelectorAll('.buttons')
 
-})(); // Don't add anything below this line
-
-
+const defaultContent = 'do some action with above buttons!!';
+ 
+btn1.onclick =() =>{
+    msgBox.innerHTML = 'Button 1 is clicked';
+}
+btn2.onclick =() =>{
+    msgBox.innerHTML = 'Button 2 is clicked';
+}
+btn3.onclick =() =>{
+    msgBox.innerHTML = 'Button 3 is clicked';
+}
+btn4.onclick =() =>{
+    msgBox.innerHTML = 'Button 4 is clicked';
+}
+btn5.onclick =() =>{
+    msgBox.innerHTML = 'Button 5 is clicked';
+}
+btn1.addEventListener('mouseover', () => {
+    // Change the content of the message box on hover
+    msgBox.innerHTML = 'Button 1 is hovering';
+});
+btn1.addEventListener('mouseout', () => {
+    // Reset the content to default when not hovering over a button
+    msgBox.innerHTML = defaultContent;
+});
+btn2.addEventListener('mouseover', () => {
+    // Change the content of the message box on hover
+    msgBox.innerHTML = 'Button 2 is hovering';
+});
+btn2.addEventListener('mouseout', () => {
+    // Reset the content to default when not hovering over a button
+    msgBox.innerHTML = defaultContent;
+});
+btn3.addEventListener('mouseover', () => {
+    // Change the content of the message box on hover
+    msgBox.innerHTML = 'Button 3 is hovering';
+});
+btn3.addEventListener('mouseout', () => {
+    // Reset the content to default when not hovering over a button
+    msgBox.innerHTML = defaultContent;
+});
+btn4.addEventListener('mouseover', () => {
+    // Change the content of the message box on hover
+    msgBox.innerHTML = 'Button 4 is hovering';
+});
+btn4.addEventListener('mouseout', () => {
+    // Reset the content to default when not hovering over a button
+    msgBox.innerHTML = defaultContent;
+});
+btn5.addEventListener('mouseover', () => {
+    // Change the content of the message box on hover
+    msgBox.innerHTML = 'Button 5 is hovering';
+});
+btn5.addEventListener('mouseout', () => {
+    // Reset the content to default when not hovering over a button
+    msgBox.innerHTML = defaultContent;
+});
 

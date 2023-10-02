@@ -1,40 +1,36 @@
+<!DOCTYPE html>
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8">
-
-    <!-- Imporant meta information to make the page as rigid as possible on mobiles, to avoid unintentional zooming on the page itself  -->
-    <meta name="viewport"
-        content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-
-    <meta http-equiv="X-UA-Compatible" content="ie=edge">
-    <title>Character Tutorial</title>
+  <meta charset="UTF-8">
+  <title>CodePen - Breaking Bad | Walter White | Animation</title>
+  <link rel="stylesheet" href="./style.css">
 
 </head>
 
 <body>
+  <!-- partial:index.partial.html -->
+  <div id="breakingbad"></div>
+  <div id="instruccions">
+    <h1>Walter White</h1>
+    <span>Hold down the click to transform!
+    </span>
 
-    <!-- The loading element overlays all else until the model is loaded, at which point we remove this element from the DOM -->
-    <div class="loading" id="js-loader">
-        <div class="loader"></div>
+    <div class="btn-container">
+      <button id="btn-1" class="buttons">Button 1</button>
+      <button id="btn-2" class="buttons">Button 2</button>
+      <button id="btn-3" class="buttons">Button 3</button>
+      <button id="btn-4" class="buttons">Button 4</button>
+      <button id="btn-5" class="buttons">Button 5</button>
     </div>
-
-    <div class="wrapper">
-        <!-- The canvas element is used to draw the 3D scene -->
-        <canvas id="c"></canvas>
-
+    <div id="msg">
+      <h3 class="msg-box">do some action with above buttons!!</h3>
     </div>
+  </div>
+  <!-- partial -->
+  <script src='https://cdnjs.cloudflare.com/ajax/libs/three.js/r79/three.min.js'></script>
+  <script src="./script.js"></script>
+
 </body>
-<script src="script.js"></script>
 
 </html>
-
-<!-- The main Three.js file -->
-<script src='https://cdnjs.cloudflare.com/ajax/libs/three.js/108/three.min.js'></script>
-
-<!-- This brings in the ability to load custom 3D objects in the .gltf file format. Blender allows the ability to export to this format out the box -->
-<script src='https://cdn.jsdelivr.net/gh/mrdoob/Three.js@r92/examples/js/loaders/GLTFLoader.js'></script>
-
-<!-- Our HTML consists of a loading animation (currently commented out until we need it), a wrapper div and our all-important canvas element. The canvas is what Three.js uses to render our scene, and the CSS sets this at 100% viewport size. We also load in two dependencies at the bottom of our HTML file: Three.js, and GLTFLoader (GLTF is the format that our 3D model is imported as). Both of these dependencies are available as npm modules.
-
-The CSS also consists of a small amount of centering styling and the rest is just the loading animation; really nothing more to it than that. You can now collapse your HTML and CSS panels, we will delve into that very little for the rest of the tutorial. -->
